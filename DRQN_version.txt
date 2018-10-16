@@ -1,0 +1,10 @@
+version-0.1: simplify experience storage, but code is wrong with the shape of feeding data
+version-0.2: (1) divide return of function Experience().sample() into 5 pieces
+             (2) the input batch must be arranged in trace first, batch second, as following:
+    		 # [[batch1_trace1],
+     		 #  [batch1_trace2],
+	         #  [batch1_trace3],
+        	 #  [batch2_trace1],
+        	 #  [batch2_trace2],
+        	 #  [batch2_trace3],]
+             (3) In DRQN, lstm_output, but not lstm_state, should be used for prediction and loss
