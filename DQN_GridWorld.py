@@ -15,7 +15,7 @@ import tensorflow.contrib.slim as slim
 import matplotlib.pyplot as plt
 import scipy.misc
 import os
-import analyse_results as ar
+import savedata as sd
 
 from gridworld import gameEnv
 
@@ -67,12 +67,12 @@ class experience_buffer():
         self.buffer = []
         self.buffer_size = buffer_size
     
-    def add(self,experience):
+    def add(self, experience):
         if len(self.buffer) + len(experience) >= self.buffer_size:
             self.buffer[0:(len(experience)+len(self.buffer))-self.buffer_size] = []
         self.buffer.extend(experience)
             
-    def sample(self,size):
+    def sample(self, size):
         return np.reshape(np.array(random.sample(self.buffer,size)),[size,5])
     
 def processState(states):
@@ -101,7 +101,7 @@ pre_train_steps = 10000 #How many steps of random actions before training begins
 max_epLength = 50 #The max allowed length of our episode.
 load_model = False #Whether to load a saved model.
 path = "./dqn" #The path to save our model to.
-results_path = os.getcwd() + '/dqn/Results.txt'
+results_path = os.getcwd() + '/dqn_results.txt'
 
 h_size = 512 #The size of the final convolutional layer before splitting it into Advantage and Value streams.
 tau = 0.001 #Rate to update target network toward primary network
@@ -141,19 +141,21 @@ with tf.Session() as sess:
         ckpt = tf.train.get_checkpoint_state(path)
         saver.restore(sess, ckpt.model_checkpoint_path)
     for i in range(num_episodes):
+        gamma = 1-1.0 / (1.0 + np.exp(-i/10000))
         episodeBuffer = experience_buffer()
         #Reset environment and get first new observation
         s = env.reset()
         s = processState(s)
         d = False
         rAll = 0
+        loss=0
         j = 0
         #The Q-Network
         while j < max_epLength: #If the agent takes longer than 200 moves to reach either of the blocks, end the trial.
             j+=1
             #Choose an action by greedily (with e chance of random action) from the Q-network
             if np.random.rand(1) < e or total_steps < pre_train_steps:
-                a = np.random.randint(0,4)
+                a = np.random.randint(0, 4)
             else:
                 a = sess.run(mainQN.predict,feed_dict={mainQN.scalarInput:[s]})[0]
             s1,r,d = env.step(a)
@@ -166,18 +168,18 @@ with tf.Session() as sess:
                     e -= stepDrop
                 
                 if total_steps % (update_freq) == 0:
-                    trainBatch = myBuffer.sample(batch_size) #Get a random batch of experiences.
-                    #Below we perform the Double-DQN update to the target Q-values
+                    trainBatch = myBuffer.sample(batch_size) # Get a random batch of experiences.
+                    # Below we perform the Double-DQN update to the target Q-values
                     Q1 = sess.run(mainQN.predict,feed_dict={mainQN.scalarInput:np.vstack(trainBatch[:,3])})
                     Q2 = sess.run(targetQN.Qout,feed_dict={targetQN.scalarInput:np.vstack(trainBatch[:,3])})
                     end_multiplier = -(trainBatch[:,4] - 1)
                     doubleQ = Q2[range(batch_size),Q1]
-                    targetQ = trainBatch[:,2] + (y*doubleQ * end_multiplier)
-                    #Update the network with our target values.
-                    _ = sess.run(mainQN.updateModel, \
-                        feed_dict={mainQN.scalarInput:np.vstack(trainBatch[:,0]),mainQN.targetQ:targetQ, mainQN.actions:trainBatch[:,1]})
+                    targetQ = trainBatch[:,2] + (gamma*doubleQ * end_multiplier)
+                    # Update the network with our target values.
+                    _, loss = sess.run((mainQN.updateModel, mainQN.loss),
+                                       feed_dict={mainQN.scalarInput:np.vstack(trainBatch[:,0]),mainQN.targetQ:targetQ, mainQN.actions:trainBatch[:,1]})
                     
-                    updateTarget(targetOps,sess) #Update the target network toward the primary network.
+                    updateTarget(targetOps,sess) # Update the target network toward the primary network.
             rAll += r
             s = s1
             
@@ -187,16 +189,17 @@ with tf.Session() as sess:
         myBuffer.add(episodeBuffer.buffer)
         jList.append(j)
         rList.append(rAll)
-        ar.save_result(f, i, 0, round(rAll, 1))
+        sd.save_result(f, i, loss, round(rAll, 1))
         #Periodically save the model. 
         if i % 50000 == 0:
             saver.save(sess,path+'/model-'+str(i)+'.ckpt')
             print("Saved Model")
         if len(rList) % 10 == 0:
-            print(total_steps, np.mean(rList[-10:]), e)
+            print(total_steps, np.mean(rList[-10:]), loss)
     saver.save(sess, path+'/model-'+str(num_episodes)+'.ckpt')
 print("Percent of succesful episodes: " + str(sum(rList)/num_episodes) + "%")
-
+plt.figure()
 rMat = np.resize(np.array(rList), [len(rList)//100, 100])
 rMean = np.average(rMat, 1)
 plt.plot(rMean, color='blue')
+plt.show()
